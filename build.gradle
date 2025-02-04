@@ -157,6 +157,9 @@ jacoco {
 }
 
 dependencies {
+    testImplementation("org.junit.jupiter:junit-jupiter:5.9.0")
+    testImplementation("org.mockito:mockito-core:5.3.1")
+    testImplementation("org.mockito:mockito-junit-jupiter:5.3.1")  
     // Include all jar-files in the 'lib' folder as dependencies
     implementation fileTree(dir: 'lib', includes: ['*.jar'])
 
@@ -604,6 +607,9 @@ test {
     useJUnitPlatform {
         excludeTags 'DatabaseTest', 'FetcherTest', 'GUITest'
     }
+test {
+useJUnitPlatform()
+}    
 
     moduleOptions {
         // TODO: Remove this as soon as ArchUnit is modularized

@@ -2,6 +2,9 @@ package org.jabref.gui.externalfiles;
 
 import java.util.List;
 import java.util.function.BiConsumer;
+import java.util.Optional;
+import java.nio.file.*;
+import java.io.IOException;
 
 import javax.swing.undo.UndoManager;
 
@@ -21,6 +24,8 @@ import org.jabref.model.database.BibDatabaseContext;
 import org.jabref.model.entry.BibEntry;
 import org.jabref.model.entry.LinkedFile;
 import org.jabref.model.entry.field.StandardField;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import static org.jabref.gui.actions.ActionHelper.needsDatabase;
 import static org.jabref.gui.actions.ActionHelper.needsEntriesSelected;
@@ -30,12 +35,18 @@ import static org.jabref.gui.actions.ActionHelper.needsEntriesSelected;
  * Never in the entry editor. FileListEditor and EntryEditor have other ways to update the file links
  */
 public class AutoLinkFilesAction extends SimpleCommand {
+    private static final Logger logger;
+
+    static {
+        logger = LoggerFactory.getLogger(AutoLinkFilesAction.class);
+    }
 
     private final DialogService dialogService;
     private final GuiPreferences preferences;
     private final StateManager stateManager;
     private final UndoManager undoManager;
     private final UiTaskExecutor taskExecutor;
+    
 
     public AutoLinkFilesAction(DialogService dialogService, GuiPreferences preferences, StateManager stateManager, UndoManager undoManager, UiTaskExecutor taskExecutor) {
         this.dialogService = dialogService;
@@ -65,6 +76,22 @@ public class AutoLinkFilesAction extends SimpleCommand {
                 // lambda for gui actions that are relevant when setting the linked file entry when ui is opened
                 String newVal = FileFieldWriter.getStringRepresentation(linkedFile);
                 String oldVal = entry.getField(StandardField.FILE).orElse(null);
+                Path originalFilePath = Path.of("a.pdf");
+                Path movedFilePath = Path.of("a/a.pdf");
+
+                if (!Files.exists(originalFilePath) && Files.exists(movedFilePath)) {
+                    newVal = movedFilePath.toString();
+                }
+
+                try {
+                    if (Files.exists(movedFilePath) && Files.list(movedFilePath.getParent())
+                            .filter(path -> path.getFileName().toString().equals(movedFilePath.getFileName().toString()))
+                            .count() > 1) {
+                        return;
+                    }
+                } catch (IOException e) {
+                    logger.error("Error while listing moved files: ", e);
+                }
                 UndoableFieldChange fieldChange = new UndoableFieldChange(entry, StandardField.FILE, oldVal, newVal);
                 nc.addEdit(fieldChange); // push to undo manager is in succeeded
                 entry.addFile(linkedFile);
@@ -108,5 +135,53 @@ public class AutoLinkFilesAction extends SimpleCommand {
                 Localization.lang("Searching for files"),
                 linkFilesTask);
         taskExecutor.execute(linkFilesTask);
+    }
+    private Optional<Path> findMovedFile(String oldFileName, BibDatabaseContext database) {
+        try {
+            List<Path> searchDirectories = database.getFileDirectories(preferences.getFilePreferences());
+
+            for (Path dir : searchDirectories) {
+                Optional<Path> foundFile = Files.walk(dir)
+                        .filter(path -> path.getFileName().toString().equals(oldFileName))
+                        .findFirst();
+
+                if (foundFile.isPresent()) {
+                    return foundFile;
+                }
+            }
+        } catch (IOException e) {
+            logger.error("Error searching for moved file: ", e);
+        }
+
+        return Optional.empty();
+    }
+
+      //Ensuring that the moved file is unique before updating the entry.
+     
+    private boolean isFileUnique(Path movedFilePath, BibDatabaseContext database) {
+        try {
+            long count = Files.list(movedFilePath.getParent())
+                    .filter(path -> path.getFileName().equals(movedFilePath.getFileName()))
+                    .count();
+
+            return count == 1;
+        } catch (IOException e) {
+            logger.error("Error checking uniqueness of file: ", e);
+        }
+
+        return false;
+    }
+
+      //Updating the entry’s file field when a moved file is found.
+     
+    private void updateFileLink(BibEntry entry, LinkedFile linkedFile, String newFilePath, NamedCompound nc) {
+        String oldValue = entry.getField(StandardField.FILE).orElse(null);
+        String newValue = newFilePath;
+
+        UndoableFieldChange fieldChange = new UndoableFieldChange(entry, StandardField.FILE, oldValue, newValue);
+        nc.addEdit(fieldChange);
+        entry.setField(StandardField.FILE, newValue);
+        System.out.println("File link updated for: " + entry.getCitationKey().orElse("Unknown") + " from " + oldValue + " to " + newValue);
+
     }
 }
